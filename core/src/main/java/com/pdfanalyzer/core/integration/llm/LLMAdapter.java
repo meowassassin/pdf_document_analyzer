@@ -120,31 +120,37 @@ public class LLMAdapter {
 
     private String buildCombinedPrompt(List<SemanticCell> cells) {
         StringBuilder sb = new StringBuilder();
-        sb.append("다음 문서를 분석하여 JSON 형식으로 응답해주세요:\n\n");
+        sb.append("다음 문서를 분석하여 JSON 형식으로 응답해주세요.\n\n");
+        sb.append("**중요**: 요약은 반드시 상세하고 포괄적이어야 하며, 내용 생략을 최소화해야 합니다.\n\n");
         sb.append("요구사항:\n");
-        sb.append("1. 문서의 핵심 내용을 상세히 요약 (summary):\n");
-        sb.append("   - 문서의 주요 목적과 배경을 구체적으로 설명\n");
-        sb.append("   - 핵심 내용을 섹션별로 구분하여 설명 (최소 3-4개 문단)\n");
-        sb.append("   - 주요 데이터, 수치, 결과가 있다면 반드시 포함\n");
-        sb.append("   - 결론이나 시사점이 있다면 명확히 기술\n");
-        sb.append("   - 길이: 최소 300자 이상, 가능한 상세하게\n");
-        sb.append("2. 핵심 키워드 8-15개 추출 (keywords 배열):\n");
-        sb.append("   - 문서의 주제와 핵심 개념을 대표하는 단어/구문\n");
-        sb.append("   - 기술 용어, 전문 용어, 핵심 인물/조직명 포함\n\n");
-        sb.append("응답 형식:\n");
+        sb.append("1. 문서의 핵심 내용을 매우 상세히 요약 (summary):\n");
+        sb.append("   - 문서의 전체 구조와 흐름을 파악하여 체계적으로 설명\n");
+        sb.append("   - 문서의 주요 목적, 배경, 맥락을 구체적으로 기술\n");
+        sb.append("   - 각 주요 섹션의 핵심 내용을 빠짐없이 요약 (5-7개 문단 이상)\n");
+        sb.append("   - 구체적인 데이터, 수치, 통계, 날짜, 인명, 조직명 등을 반드시 포함\n");
+        sb.append("   - 주요 논점, 주장, 근거, 결론을 명확하게 설명\n");
+        sb.append("   - 세부 사항과 부연 설명도 포함하여 풍부하게 작성\n");
+        sb.append("   - 결론, 시사점, 제언사항이 있다면 상세히 기술\n");
+        sb.append("   - **최소 길이**: 500자 이상 (가능하면 800-1000자 권장)\n");
+        sb.append("   - **원칙**: 문서의 주요 정보를 최대한 보존하고, 생략을 최소화할 것\n\n");
+        sb.append("2. 핵심 키워드 10-20개 추출 (keywords 배열):\n");
+        sb.append("   - 문서의 주제, 핵심 개념, 중요 용어를 대표하는 단어/구문\n");
+        sb.append("   - 기술 용어, 전문 용어, 고유명사, 핵심 인물/조직명 포함\n");
+        sb.append("   - 문서 전반에 걸쳐 중요하게 다뤄진 개념들을 모두 포함\n\n");
+        sb.append("응답 형식 (JSON만 반환, 다른 텍스트 없이):\n");
         sb.append("{\n");
-        sb.append("  \"summary\": \"문서의 상세한 요약 내용...\",\n");
+        sb.append("  \"summary\": \"문서의 매우 상세하고 포괄적인 요약 내용 (최소 500자 이상)...\",\n");
         sb.append("  \"keywords\": [\"키워드1\", \"키워드2\", \"키워드3\", ...]\n");
         sb.append("}\n\n");
         sb.append("문서 내용:\n\n");
 
-        // 중요도가 높은 셀을 더 많이 포함하고, 내용을 더 길게 포함
+        // 더 많은 셀을 포함하고, 내용을 충분히 길게 포함
         int cellCount = 0;
         for (SemanticCell cell : cells) {
-            if (cellCount >= 30) break; // 최대 30개 셀
+            if (cellCount >= 50) break; // 최대 50개 셀로 증가
 
-            // 헤더는 전체, 일반 셀은 500자까지
-            int maxLength = cell.isHeader() ? cell.getContent().length() : 500;
+            // 헤더는 전체, 일반 셀은 800자까지 (이전 500자에서 증가)
+            int maxLength = cell.isHeader() ? cell.getContent().length() : 800;
             String cellContent = cell.getContent().substring(0, Math.min(maxLength, cell.getContent().length()));
 
             if (cell.isHeader()) {
@@ -333,67 +339,122 @@ public class LLMAdapter {
     private String generateFallbackSummary(List<SemanticCell> cells) {
         StringBuilder sb = new StringBuilder();
 
-        // 문서 개요
         sb.append("=== 문서 요약 ===\n\n");
 
-        // 상위 10개 중요 셀을 점수순으로 가져오기
-        List<SemanticCell> topCells = cells.stream()
+        // 헤더와 내용 셀을 분리
+        List<SemanticCell> headers = cells.stream()
+                .filter(SemanticCell::isHeader)
                 .sorted((a, b) -> Double.compare(b.getStructuralScore(), a.getStructuralScore()))
-                .limit(15)
+                .limit(5)
                 .collect(Collectors.toList());
 
-        // 내용이 있는 셀만 필터링하고 요약 생성
-        int contentCount = 0;
-        for (SemanticCell cell : topCells) {
-            String content = cell.getContent().trim();
-            if (content.isEmpty() || content.length() < 20) continue;
+        List<SemanticCell> contentCells = cells.stream()
+                .filter(c -> !c.isHeader())
+                .filter(c -> c.getContent().length() > 50) // 최소 50자 이상
+                .sorted((a, b) -> Double.compare(b.getStructuralScore(), a.getStructuralScore()))
+                .limit(20)
+                .collect(Collectors.toList());
 
-            // 헤더인 경우
-            if (cell.isHeader()) {
-                sb.append("\n【 ").append(content).append(" 】\n");
-            } else {
-                // 일반 내용: 의미있는 문장 추출
-                String[] sentences = content.split("[.!?]\\s+");
-                for (String sentence : sentences) {
-                    sentence = sentence.trim();
-                    if (sentence.length() > 30 && sentence.length() < 300) {
-                        sb.append("• ").append(sentence).append(".\n");
-                        contentCount++;
-                        if (contentCount >= 10) break; // 최대 10개 문장
-                    }
+        // 주요 섹션과 내용을 최대한 상세하게 포함
+        int addedContent = 0;
+
+        // 모든 헤더와 관련 내용을 포함 (최대 10개 섹션)
+        for (int i = 0; i < Math.min(headers.size(), 10); i++) {
+            // 헤더 출력
+            if (i < headers.size()) {
+                sb.append("\n【 ").append(headers.get(i).getContent()).append(" 】\n");
+            }
+
+            // 해당 헤더 관련 내용 찾기 (섹션당 3-5개 내용 셀)
+            int contentStart = i * 3;
+            int contentEnd = Math.min(contentStart + 5, contentCells.size());
+
+            for (int j = contentStart; j < contentEnd && addedContent < 40; j++) {  // 최대 40개로 증가
+                SemanticCell cell = contentCells.get(j);
+                String content = cell.getContent().trim();
+
+                // 의미있는 부분을 더 길게 추출 (400자로 증가)
+                String summary = extractMeaningfulContent(content, 400);
+                if (!summary.isEmpty()) {
+                    sb.append("• ").append(summary).append("\n");
+                    addedContent++;
                 }
-                if (contentCount >= 10) break;
             }
         }
 
-        // 내용이 충분하지 않으면 추가 정보 제공
-        if (contentCount < 3) {
-            sb.append("\n\n【 문서 구조 】\n");
-            List<SemanticCell> headers = cells.stream()
+        // 내용이 부족하면 추가 내용 보강
+        if (addedContent < 10) {
+            sb.append("\n【 추가 주요 내용 】\n");
+
+            // 아직 사용하지 않은 content cell들을 추가
+            int startIdx = addedContent * 3;
+            for (int i = startIdx; i < Math.min(startIdx + 20, contentCells.size()); i++) {
+                String excerpt = extractMeaningfulContent(contentCells.get(i).getContent(), 300);
+                if (!excerpt.isEmpty()) {
+                    sb.append("• ").append(excerpt).append("\n");
+                    addedContent++;
+                }
+            }
+        }
+
+        // 문서 구조도 함께 보여주기
+        if (headers.size() > 5) {
+            sb.append("\n【 문서 전체 구조 】\n");
+            List<SemanticCell> allHeaders = cells.stream()
                     .filter(SemanticCell::isHeader)
-                    .limit(8)
+                    .limit(15)  // 최대 15개 헤더
                     .collect(Collectors.toList());
 
-            for (int i = 0; i < headers.size(); i++) {
-                sb.append((i + 1)).append(". ").append(headers.get(i).getContent()).append("\n");
+            for (int i = 0; i < allHeaders.size(); i++) {
+                sb.append((i + 1)).append(". ").append(allHeaders.get(i).getContent()).append("\n");
             }
         }
 
         // 통계 정보
         long headerCount = cells.stream().filter(SemanticCell::isHeader).count();
         long contentCellCount = cells.size() - headerCount;
-        sb.append("\n\n【 문서 정보 】\n");
+        sb.append("\n【 문서 정보 】\n");
         sb.append("• 총 ").append(cells.size()).append("개 섹션 (제목: ").append(headerCount)
           .append(", 내용: ").append(contentCellCount).append(")\n");
 
-        // 페이지 정보 추정
         int estimatedPages = cells.stream()
-                .mapToInt(c -> c.getPageNumber())
+                .mapToInt(c -> c.getPageNumber() != null ? c.getPageNumber() : 0)
                 .max()
                 .orElse(1);
         sb.append("• 예상 페이지 수: 약 ").append(estimatedPages).append(" 페이지\n");
 
         return sb.toString();
+    }
+
+    /**
+     * 내용에서 의미있는 부분 추출
+     */
+    private String extractMeaningfulContent(String content, int maxLength) {
+        if (content == null || content.trim().isEmpty()) return "";
+
+        content = content.trim();
+
+        // 너무 짧으면 그대로 반환
+        if (content.length() <= maxLength) {
+            return content;
+        }
+
+        // maxLength까지 자르되, 문장이 끊기지 않도록 마지막 마침표/줄바꿈 찾기
+        String truncated = content.substring(0, maxLength);
+
+        // 마지막 문장 구분자 찾기
+        int lastPeriod = Math.max(
+            truncated.lastIndexOf(". "),
+            Math.max(truncated.lastIndexOf(".\n"), truncated.lastIndexOf("。"))
+        );
+
+        if (lastPeriod > maxLength / 2) {
+            // 문장이 너무 짧지 않으면 문장 단위로 자르기
+            return truncated.substring(0, lastPeriod + 1).trim();
+        }
+
+        // 그냥 자르고 "..." 추가
+        return truncated.trim() + "...";
     }
 
     private List<String> generateFallbackKeywords(List<SemanticCell> cells) {

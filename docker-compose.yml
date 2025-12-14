@@ -28,7 +28,7 @@ services:
       dockerfile: Dockerfile
     container_name: pdf-analyzer-core
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_API_KEY=https://prod.liveshare.vsengsaas.visualstudio.com/join?7BF19FE6E23C57C4289EE548DFE90FC609BC
       - GEMINI_MODEL=gemini-2.0-flash
       - SPRING_PROFILES_ACTIVE=prod
     ports:
